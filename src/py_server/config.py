@@ -29,8 +29,15 @@ class Config(BaseSettings):
 	# Настройки безопасности
 	cors_origins: list[str] = Field(default=["*"], description="Разрешенные CORS origins")
 	
-	# Настройки авторизации OAuth2
-	auth_mode: Literal["none", "oauth2"] = Field(default="none", description="Режим авторизации: none или oauth2")
+	# Настройки авторизации
+	auth_mode: Literal["none", "oauth2", "bearer"] = Field(
+		default="none",
+		description="Режим авторизации: none, oauth2 или bearer"
+	)
+	auth_token: Optional[str] = Field(
+		default=None,
+		description="Bearer токен для auth_mode=bearer (MCP_AUTH_TOKEN)"
+	)
 
 	@field_validator("auth_mode", mode="before")
 	@classmethod
@@ -38,6 +45,7 @@ class Config(BaseSettings):
 		if isinstance(v, str):
 			return v.lower()
 		return v
+
 	public_url: Optional[str] = Field(default=None, description="Публичный URL прокси для OAuth2 (если не задан, формируется из запроса)")
 	oauth2_code_ttl: int = Field(default=120, description="TTL authorization code в секундах")
 	oauth2_access_ttl: int = Field(default=3600, description="TTL access token в секундах")
@@ -50,4 +58,4 @@ class Config(BaseSettings):
 
 def get_config() -> Config:
 	"""Получить конфигурацию."""
-	return Config() 
+	return Config()
