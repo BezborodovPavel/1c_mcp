@@ -50,13 +50,14 @@ def create_parser() -> argparse.ArgumentParser:
 
 Переменные окружения:
   MCP_ONEC_URL           - URL базы 1С (обязательно)
-  MCP_ONEC_USERNAME      - Имя пользователя 1С (обязательно при auth_mode=none)
-  MCP_ONEC_PASSWORD      - Пароль пользователя 1С (обязательно при auth_mode=none)
+  MCP_ONEC_USERNAME      - Имя пользователя 1С (обязательно при auth_mode=none и bearer)
+  MCP_ONEC_PASSWORD      - Пароль пользователя 1С (обязательно при auth_mode=none и bearer)
   MCP_ONEC_SERVICE_ROOT  - Корневой URL HTTP-сервиса (по умолчанию: mcp)
   MCP_HOST               - Хост HTTP-сервера (по умолчанию: 127.0.0.1)
   MCP_PORT               - Порт HTTP-сервера (по умолчанию: 8000)
   MCP_LOG_LEVEL          - Уровень логирования (по умолчанию: INFO)
-  MCP_AUTH_MODE          - Режим авторизации: none или oauth2 (по умолчанию: none)
+  MCP_AUTH_MODE          - Режим авторизации: none, bearer или oauth2 (по умолчанию: none)
+  MCP_AUTH_TOKEN         - Bearer токен (обязателен при auth_mode=bearer)
   MCP_PUBLIC_URL         - Публичный URL для OAuth2 (опционально)
   MCP_OAUTH2_CODE_TTL    - TTL authorization code в секундах (по умолчанию: 120)
   MCP_OAUTH2_ACCESS_TTL  - TTL access token в секундах (по умолчанию: 3600)
@@ -118,12 +119,12 @@ def create_parser() -> argparse.ArgumentParser:
 		help="Порт для HTTP-сервера (только для режима http)"
 	)
 	
-	# OAuth2 аргументы
+	# Auth аргументы
 	parser.add_argument(
 		"--auth-mode",
 		type=str.lower,
-		choices=["none", "oauth2"],
-		help="Режим авторизации: none или oauth2"
+		choices=["none", "oauth2", "bearer"],
+		help="Режим авторизации: none, bearer или oauth2"
 	)
 	parser.add_argument(
 		"--public-url",
@@ -211,11 +212,23 @@ async def main():
 		logger.error("OAuth2 не поддерживается в режиме stdio. Используйте auth_mode=none.")
 		sys.exit(1)
 
+	if args.mode == "stdio" and config.auth_mode == "bearer":
+		logger.error("Bearer auth не поддерживается в режиме stdio. Используйте auth_mode=none.")
+		sys.exit(1)
+
 	if config.auth_mode == "none":
 		if config.onec_username is None or config.onec_password is None:
 			logger.error("Для auth_mode=none обязательны MCP_ONEC_USERNAME и MCP_ONEC_PASSWORD.")
 			sys.exit(1)
-	else:
+	elif config.auth_mode == "bearer":
+		if not config.auth_token:
+			logger.error("Для auth_mode=bearer обязателен MCP_AUTH_TOKEN.")
+			sys.exit(1)
+		if config.onec_username is None or config.onec_password is None:
+			logger.error("Для auth_mode=bearer обязательны MCP_ONEC_USERNAME и MCP_ONEC_PASSWORD.")
+			sys.exit(1)
+		logger.info("Bearer авторизация включена.")
+	else:  # oauth2
 		if config.onec_username or config.onec_password:
 			logger.warning("MCP_ONEC_USERNAME/MCP_ONEC_PASSWORD заданы, но будут игнорироваться при auth_mode=oauth2.")
 	
@@ -247,4 +260,4 @@ async def main():
 
 
 if __name__ == "__main__":
-	asyncio.run(main()) 
+	asyncio.run(main())
