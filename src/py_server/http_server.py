@@ -28,18 +28,23 @@ logger = logging.getLogger(__name__)
 
 
 class OAuth2BearerMiddleware(BaseHTTPMiddleware):
-	"""Middleware для проверки Bearer токенов в режиме OAuth2."""
+	"""Middleware для проверки токенов авторизации (статический Bearer или OAuth2)."""
 	
-	def __init__(self, app, oauth2_service: Optional[OAuth2Service], auth_mode: str):
+	def __init__(self, app, oauth2_service: Optional[OAuth2Service], auth_mode: str, static_token: Optional[str] = None):
 		super().__init__(app)
 		self.oauth2_service = oauth2_service
 		self.auth_mode = auth_mode
+		self.static_token = static_token
 		self.protected_paths = ["/mcp/", "/sse"]
 	
 	async def dispatch(self, request: Request, call_next):
 		"""Проверка авторизации для защищённых путей."""
-		# Пропускаем, если auth_mode != oauth2
-		if self.auth_mode != "oauth2":
+		# Пропускаем OPTIONS запросы (CORS preflight)
+		if request.method == "OPTIONS":
+			return await call_next(request)
+
+		# Пропускаем, если auth_mode == none
+		if self.auth_mode == "none":
 			return await call_next(request)
 		
 		# Проверяем, является ли путь защищённым
@@ -59,8 +64,25 @@ class OAuth2BearerMiddleware(BaseHTTPMiddleware):
 			)
 		
 		token = auth_header[7:]  # Убираем "Bearer "
-		
-		# Валидируем токен (поддерживаем два формата)
+
+		# Режим статического Bearer токена
+		if self.auth_mode == "bearer":
+			if token != self.static_token:
+				logger.warning(
+					f"Bearer token verification failed. "
+					f"Authorization: {auth_header[:20]}... (truncated)"
+				)
+				return JSONResponse(
+					status_code=401,
+					content={"error": "invalid_token"},
+					headers={"WWW-Authenticate": 'Bearer error="invalid_token"'}
+				)
+			logger.debug("Bearer token verified successfully")
+			# Не устанавливаем current_onec_credentials — используются статические из config
+			return await call_next(request)
+
+		# Режим OAuth2: валидируем токен через хранилище
+		# Поддерживаем два формата
 		creds = None
 		
 		# 1. Простой формат: simple_base64(username:password)
@@ -122,6 +144,8 @@ class MCPHttpServer:
 				refresh_ttl=config.oauth2_refresh_ttl
 			)
 			logger.info("OAuth2 авторизация включена")
+		elif config.auth_mode == "bearer":
+			logger.info("Bearer авторизация включена")
 		
 		self.app = FastAPI(
 			title="1C MCP Proxy",
@@ -139,11 +163,12 @@ class MCPHttpServer:
 			allow_headers=["*"],
 		)
 		
-		# Добавляем OAuth2 middleware
+		# Добавляем auth middleware (OAuth2 или статический Bearer)
 		self.app.add_middleware(
 			OAuth2BearerMiddleware,
 			oauth2_service=self.oauth2_service,
-			auth_mode=config.auth_mode
+			auth_mode=config.auth_mode,
+			static_token=config.auth_token,
 		)
 		
 		# Монтируем транспорты
@@ -298,6 +323,8 @@ class MCPHttpServer:
 					"authorize": "/authorize",
 					"token": "/token"
 				}
+			elif self.config.auth_mode == "bearer":
+				endpoints["auth"] = {"mode": "bearer", "header": "Authorization: Bearer <MCP_AUTH_TOKEN>"}
 			return {
 				"message": "1C MCP Proxy Server",
 				"endpoints": endpoints
@@ -768,4 +795,4 @@ async def run_http_server(config: Config):
 		config: Конфигурация сервера
 	"""
 	server = MCPHttpServer(config)
-	await server.start() 
+	await server.start()
